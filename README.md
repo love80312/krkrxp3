@@ -29,13 +29,13 @@ Supported features:
 Install with Go:
 
 ```bash
-go install github.com/Seann-Moser/krkrxp3@latest
+go install github.com/DarlingGoose/krkrxp3@latest
 ```
 
 Or build from a local checkout:
 
 ```bash
-git clone https://github.com/Seann-Moser/krkrxp3.git
+git clone https://github.com/DarlingGoose/krkrxp3.git
 cd krkrxp3
 go build .
 ```

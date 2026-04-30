@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Seann-Moser/krkrxp3/pkg/xp3"
+	"github.com/DarlingGoose/krkrxp3/pkg/xp3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

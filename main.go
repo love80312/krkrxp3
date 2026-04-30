@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/Seann-Moser/krkrxp3/cmd"
+	"github.com/DarlingGoose/krkrxp3/cmd"
 )
 
 func main() {
