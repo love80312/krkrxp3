@@ -11,19 +11,21 @@ import (
 )
 
 type Writer struct {
-	file      *os.File
-	w         io.WriteSeeker
-	entries   []Entry
-	filenames map[string]struct{}
-	packed    bool
-	closeFile bool
+	file                *os.File
+	w                   io.WriteSeeker
+	entries             []Entry
+	filenames           map[string]struct{}
+	packed              bool
+	closeFile           bool
+	omitPathTerminators bool
 }
 
 type AddFolderOptions struct {
-	Flatten        bool
-	EncryptionType string
-	SaveTimestamps bool
-	Logger         *slog.Logger
+	Flatten             bool
+	EncryptionType      string
+	SaveTimestamps      bool
+	OmitPathTerminators bool
+	Logger              *slog.Logger
 }
 
 func CreateWriter(path string) (*Writer, error) {
@@ -60,6 +62,10 @@ func NewWriter(w io.WriteSeeker) (*Writer, error) {
 	}, nil
 }
 
+func (w *Writer) SetOmitPathTerminators(omit bool) {
+	w.omitPathTerminators = omit
+}
+
 func (w *Writer) Close() error {
 	var packErr error
 	if !w.packed {
@@ -80,6 +86,7 @@ func (w *Writer) AddFolder(root string, opts AddFolderOptions) error {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	w.SetOmitPathTerminators(opts.OmitPathTerminators)
 
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -167,7 +174,9 @@ func (w *Writer) Pack() error {
 	if w.packed {
 		return nil
 	}
-	index, err := encodeIndex(w.entries)
+	index, err := encodeIndex(w.entries, encodeOptions{
+		OmitPathTerminators: w.omitPathTerminators,
+	})
 	if err != nil {
 		return err
 	}

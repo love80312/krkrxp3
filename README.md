@@ -21,6 +21,8 @@ Supported features:
 - Dump the raw archive index.
 - Preserve folder structure or flatten files into the archive root.
 - Optionally store file timestamps when repacking.
+- Optionally omit UTF-16 path terminators for archives that use that index
+  variant.
 - Read and write the supported Awakening encryption modes:
   `none`, `neko_vol0`, `neko_vol0_steam`, `neko_vol1`, `neko_vol1_steam`.
 
@@ -29,13 +31,13 @@ Supported features:
 Install with Go:
 
 ```bash
-go install github.com/Seann-Moser/krkrxp3@latest
+go install github.com/DarlingGoose/krkrxp3@latest
 ```
 
 Or build from a local checkout:
 
 ```bash
-git clone https://github.com/Seann-Moser/krkrxp3.git
+git clone https://github.com/DarlingGoose/krkrxp3.git
 cd krkrxp3
 go build .
 ```
@@ -66,6 +68,12 @@ Preserve file timestamps when repacking:
 
 ```bash
 krkrxp3 -m repack --save-timestamps data data.xp3
+```
+
+Match archives that omit UTF-16 null terminators in index path chunks:
+
+```bash
+krkrxp3 -m repack --omit-path-terminators data data.xp3
 ```
 
 Use an encryption mode:
@@ -106,6 +114,7 @@ silent: false
 flatten: false
 dump-index: false
 save-timestamps: false
+omit-path-terminators: false
 ```
 
 ## Notes

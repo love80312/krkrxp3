@@ -1,4 +1,4 @@
-module github.com/Seann-Moser/krkrxp3
+module github.com/DarlingGoose/krkrxp3
 
 go 1.26.2
 

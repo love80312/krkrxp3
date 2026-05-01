@@ -70,6 +70,10 @@ func (r *Reader) Entries() []Entry {
 	return append([]Entry(nil), r.entries...)
 }
 
+func (r *Reader) OmitPathTerminatorsRecommended() bool {
+	return countUnterminatedPaths(r.entries) > 0
+}
+
 func (r *Reader) DumpIndex(path string) error {
 	if err := mkdirParent(path); err != nil {
 		return err
@@ -83,6 +87,9 @@ func (r *Reader) ExtractAll(outputDir string, opts ExtractOptions) error {
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	if count := countUnterminatedPaths(r.entries); count > 0 {
+		opts.Logger.Info("[omit-null-term] archive index has UTF-16 path chunks without null terminators; use --omit-path-terminators when repacking to match this layout", "entries", count)
 	}
 
 	for _, entry := range r.entries {
@@ -147,6 +154,20 @@ func ReadEntry(rs io.ReadSeeker, entry Entry, encryptionType string, raw bool) (
 		out = append(out, data...)
 	}
 	return out, nil
+}
+
+func countUnterminatedPaths(entries []Entry) int {
+	var count int
+	for _, entry := range entries {
+		if !entry.Info.PathTerminated {
+			count++
+			continue
+		}
+		if entry.Encryption != nil && !entry.Encryption.PathTerminated {
+			count++
+		}
+	}
+	return count
 }
 
 func mkdirParent(path string) error {

@@ -2,8 +2,10 @@ package xp3
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -174,4 +176,119 @@ func TestReadInfoWithoutNullTerminator(t *testing.T) {
 	if got := entries[0].FilePath(); got != "a/b" {
 		t.Fatalf("FilePath() = %q", got)
 	}
+}
+
+func TestEncodeIndexCanOmitPathTerminators(t *testing.T) {
+	entry, _, err := makeEntry("bgimage/ABOUT.png", []byte("content"), uint64(len(signature)+8), EncryptionNone, 0)
+	if err != nil {
+		t.Fatalf("makeEntry() error = %v", err)
+	}
+
+	withTerminator, err := encodeIndex([]Entry{entry}, encodeOptions{})
+	if err != nil {
+		t.Fatalf("encodeIndex() with terminator error = %v", err)
+	}
+	withoutTerminator, err := encodeIndex([]Entry{entry}, encodeOptions{OmitPathTerminators: true})
+	if err != nil {
+		t.Fatalf("encodeIndex() without terminator error = %v", err)
+	}
+
+	withEntry := mustParseSingleEntry(t, indexPayload(t, withTerminator))
+	withoutEntry := mustParseSingleEntry(t, indexPayload(t, withoutTerminator))
+
+	if withEntry.FilePath() != withoutEntry.FilePath() {
+		t.Fatalf("paths differ: %q != %q", withEntry.FilePath(), withoutEntry.FilePath())
+	}
+	if got := infoChunkSize(t, indexPayload(t, withTerminator)); got != 58 {
+		t.Fatalf("terminated info chunk size = %d, want 58", got)
+	}
+	if got := infoChunkSize(t, indexPayload(t, withoutTerminator)); got != 56 {
+		t.Fatalf("unterminated info chunk size = %d, want 56", got)
+	}
+}
+
+func TestReaderRecommendsOmittingPathTerminators(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "unterminated.xp3")
+	writer, err := CreateWriter(archive)
+	if err != nil {
+		t.Fatalf("CreateWriter() error = %v", err)
+	}
+	writer.SetOmitPathTerminators(true)
+	if err := writer.Add("bgimage/ABOUT.png", []byte("content"), EncryptionNone, 0); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reader, err := OpenReader(archive)
+	if err != nil {
+		t.Fatalf("OpenReader() error = %v", err)
+	}
+	defer reader.Close()
+
+	if !reader.OmitPathTerminatorsRecommended() {
+		t.Fatal("OmitPathTerminatorsRecommended() = false, want true")
+	}
+}
+
+func indexPayload(t *testing.T, index []byte) []byte {
+	t.Helper()
+	if len(index) < 9 {
+		t.Fatalf("index too short: %d", len(index))
+	}
+	switch index[0] {
+	case indexUncompressed:
+		size := binary.LittleEndian.Uint64(index[1:9])
+		if int(size) != len(index)-9 {
+			t.Fatalf("index payload size = %d, want %d", size, len(index)-9)
+		}
+		return index[9:]
+	case indexCompressed:
+		if len(index) < 17 {
+			t.Fatalf("compressed index too short: %d", len(index))
+		}
+		compressedSize := binary.LittleEndian.Uint64(index[1:9])
+		uncompressedSize := binary.LittleEndian.Uint64(index[9:17])
+		if int(compressedSize) != len(index)-17 {
+			t.Fatalf("compressed payload size = %d, want %d", compressedSize, len(index)-17)
+		}
+		zr, err := zlib.NewReader(bytes.NewReader(index[17:]))
+		if err != nil {
+			t.Fatalf("zlib.NewReader() error = %v", err)
+		}
+		defer zr.Close()
+		payload, err := io.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		if uint64(len(payload)) != uncompressedSize {
+			t.Fatalf("uncompressed payload size = %d, want %d", len(payload), uncompressedSize)
+		}
+		return payload
+	default:
+		t.Fatalf("unexpected index flag: 0x%02x", index[0])
+		return nil
+	}
+}
+
+func mustParseSingleEntry(t *testing.T, payload []byte) Entry {
+	t.Helper()
+	entries, err := parseEntries(payload)
+	if err != nil {
+		t.Fatalf("parseEntries() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(entries))
+	}
+	return entries[0]
+}
+
+func infoChunkSize(t *testing.T, payload []byte) uint64 {
+	t.Helper()
+	offset := bytes.Index(payload, []byte("info"))
+	if offset < 0 {
+		t.Fatal("info chunk not found")
+	}
+	return binary.LittleEndian.Uint64(payload[offset+4 : offset+12])
 }

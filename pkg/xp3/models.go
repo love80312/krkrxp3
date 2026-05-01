@@ -27,9 +27,10 @@ type Entry struct {
 }
 
 type Encryption struct {
-	ChunkName [4]byte
-	Adler32   uint32
-	FilePath  string
+	ChunkName      [4]byte
+	Adler32        uint32
+	FilePath       string
+	PathTerminated bool
 }
 
 type FileTime struct {
@@ -52,6 +53,7 @@ type Info struct {
 	UncompressedSize uint64
 	CompressedSize   uint64
 	FilePath         string
+	PathTerminated   bool
 }
 
 func (e Entry) FilePath() string {
@@ -269,7 +271,7 @@ func readEncryption(r *bytes.Reader, name [4]byte) (Encryption, error) {
 			return Encryption{}, fmt.Errorf("skip encryption path terminator: %w", err)
 		}
 	}
-	return Encryption{ChunkName: name, Adler32: checksum, FilePath: stringFromUTF16LE(pathBytes)}, nil
+	return Encryption{ChunkName: name, Adler32: checksum, FilePath: stringFromUTF16LE(pathBytes), PathTerminated: hasTerminator}, nil
 }
 
 func readTime(r *bytes.Reader) (FileTime, error) {
@@ -373,6 +375,7 @@ func readInfo(r *bytes.Reader) (Info, error) {
 		UncompressedSize: uncompressedSize,
 		CompressedSize:   compressedSize,
 		FilePath:         stringFromUTF16LE(pathBytes),
+		PathTerminated:   hasTerminator,
 	}, nil
 }
 
@@ -390,10 +393,14 @@ func sizedUTF16PathBytes(chunkSize uint64, fixedSize uint64, pathLength uint16) 
 	return 0, false, fmt.Errorf("chunk size %d does not match UTF-16 path length %d", chunkSize, pathLength)
 }
 
-func encodeIndex(entries []Entry) ([]byte, error) {
+type encodeOptions struct {
+	OmitPathTerminators bool
+}
+
+func encodeIndex(entries []Entry, opts encodeOptions) ([]byte, error) {
 	var uncompressed bytes.Buffer
 	for _, entry := range entries {
-		if err := writeEntry(&uncompressed, entry); err != nil {
+		if err := writeEntry(&uncompressed, entry, opts); err != nil {
 			return nil, err
 		}
 	}
@@ -427,9 +434,9 @@ func encodeIndex(entries []Entry) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func writeEntry(w io.Writer, entry Entry) error {
+func writeEntry(w io.Writer, entry Entry, opts encodeOptions) error {
 	if entry.Encryption != nil {
-		if err := writeEncryption(w, *entry.Encryption); err != nil {
+		if err := writeEncryption(w, *entry.Encryption, opts); err != nil {
 			return err
 		}
 	}
@@ -438,7 +445,7 @@ func writeEntry(w io.Writer, entry Entry) error {
 	writeTime(&body, entry.Time)
 	writeAdler(&body, entry.Adler)
 	writeSegments(&body, entry.Segments)
-	writeInfo(&body, entry.Info)
+	writeInfo(&body, entry.Info, opts)
 
 	if _, err := w.Write([]byte("File")); err != nil {
 		return err
@@ -448,16 +455,20 @@ func writeEntry(w io.Writer, entry Entry) error {
 	return err
 }
 
-func writeEncryption(w io.Writer, encryption Encryption) error {
+func writeEncryption(w io.Writer, encryption Encryption, opts encodeOptions) error {
 	if _, err := w.Write(encryption.ChunkName[:]); err != nil {
 		return err
 	}
 	pathBytes := utf16LEBytes(encryption.FilePath)
-	writeUint64(w, uint64(4+2+len(pathBytes)+2))
+	terminatorSize := pathTerminatorSize(opts)
+	writeUint64(w, uint64(4+2+len(pathBytes)+terminatorSize))
 	writeUint32(w, encryption.Adler32)
 	writeUint16(w, uint16(len([]rune(encryption.FilePath))))
 	if _, err := w.Write(pathBytes); err != nil {
 		return err
+	}
+	if terminatorSize == 0 {
+		return nil
 	}
 	_, err := w.Write([]byte{0, 0})
 	return err
@@ -490,10 +501,11 @@ func writeSegments(w io.Writer, segments []Segment) {
 	}
 }
 
-func writeInfo(w io.Writer, info Info) {
+func writeInfo(w io.Writer, info Info, opts encodeOptions) {
 	w.Write([]byte("info"))
 	pathBytes := utf16LEBytes(info.FilePath)
-	writeUint64(w, uint64(4+8+8+2+len(pathBytes)+2))
+	terminatorSize := pathTerminatorSize(opts)
+	writeUint64(w, uint64(4+8+8+2+len(pathBytes)+terminatorSize))
 	if info.IsEncrypted {
 		writeUint32(w, fileIsEncrypted)
 	} else {
@@ -503,7 +515,16 @@ func writeInfo(w io.Writer, info Info) {
 	writeUint64(w, info.CompressedSize)
 	writeUint16(w, uint16(len([]rune(info.FilePath))))
 	w.Write(pathBytes)
-	w.Write([]byte{0, 0})
+	if terminatorSize != 0 {
+		w.Write([]byte{0, 0})
+	}
+}
+
+func pathTerminatorSize(opts encodeOptions) int {
+	if opts.OmitPathTerminators {
+		return 0
+	}
+	return 2
 }
 
 func makeEntry(internalPath string, data []byte, offset uint64, encryptionType string, timestampMillis uint64) (Entry, []byte, error) {
@@ -524,9 +545,10 @@ func makeEntry(internalPath string, data []byte, offset uint64, encryptionType s
 		}
 		payload = encrypted
 		encryption = &Encryption{
-			ChunkName: params.chunkName,
-			Adler32:   checksum,
-			FilePath:  internalPath,
+			ChunkName:      params.chunkName,
+			Adler32:        checksum,
+			FilePath:       internalPath,
+			PathTerminated: true,
 		}
 		infoPath = encryptedPathHash(internalPath)
 	}
@@ -559,6 +581,7 @@ func makeEntry(internalPath string, data []byte, offset uint64, encryptionType s
 			UncompressedSize: uncompressedSize,
 			CompressedSize:   compressedSize,
 			FilePath:         infoPath,
+			PathTerminated:   true,
 		},
 	}
 	return entry, output, nil

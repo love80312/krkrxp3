@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Seann-Moser/krkrxp3/pkg/xp3"
+	"github.com/DarlingGoose/krkrxp3/pkg/xp3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -21,6 +21,7 @@ type options struct {
 	flatten        bool
 	dumpIndex      bool
 	saveTimestamps bool
+	omitPathTerms  bool
 }
 
 func Execute(ctx context.Context) error {
@@ -52,6 +53,7 @@ func Execute(ctx context.Context) error {
 	rootCmd.Flags().BoolP("flatten", "f", false, "pack files into the archive root")
 	rootCmd.Flags().BoolP("dump-index", "i", false, "dump the archive file index instead of extracting files")
 	rootCmd.Flags().Bool("save-timestamps", false, "store source file modification times when repacking")
+	rootCmd.Flags().Bool("omit-path-terminators", false, "omit UTF-16 null terminators in index path chunks when repacking")
 
 	if err := bindFlags(rootCmd); err != nil {
 		return err
@@ -64,7 +66,7 @@ func bindFlags(cmd *cobra.Command) error {
 	if err := viper.BindPFlag("config", cmd.PersistentFlags().Lookup("config")); err != nil {
 		return err
 	}
-	for _, key := range []string{"mode", "encryption", "silent", "flatten", "dump-index", "save-timestamps"} {
+	for _, key := range []string{"mode", "encryption", "silent", "flatten", "dump-index", "save-timestamps", "omit-path-terminators"} {
 		if err := viper.BindPFlag(key, cmd.Flags().Lookup(key)); err != nil {
 			return err
 		}
@@ -106,6 +108,7 @@ func optionsFromViper(cfgFile string) options {
 		flatten:        viper.GetBool("flatten"),
 		dumpIndex:      viper.GetBool("dump-index"),
 		saveTimestamps: viper.GetBool("save-timestamps"),
+		omitPathTerms:  viper.GetBool("omit-path-terminators"),
 	}
 }
 
@@ -156,10 +159,11 @@ func run(ctx context.Context, opts options, input string, output string) error {
 
 		slog.InfoContext(ctx, "packing archive", "input", input, "output", output)
 		if err := writer.AddFolder(input, xp3.AddFolderOptions{
-			Flatten:        opts.flatten,
-			EncryptionType: opts.encryption,
-			SaveTimestamps: opts.saveTimestamps,
-			Logger:         slog.Default(),
+			Flatten:             opts.flatten,
+			EncryptionType:      opts.encryption,
+			SaveTimestamps:      opts.saveTimestamps,
+			OmitPathTerminators: opts.omitPathTerms,
+			Logger:              slog.Default(),
 		}); err != nil {
 			closeErr := writer.Close()
 			if closeErr != nil {
