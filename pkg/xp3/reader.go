@@ -20,7 +20,7 @@ type Reader struct {
 type ExtractOptions struct {
 	EncryptionType string
 	Raw            bool
-	Logger         *slog.Logger
+	Logger         Logger
 }
 
 func OpenReader(path string) (*Reader, error) {
