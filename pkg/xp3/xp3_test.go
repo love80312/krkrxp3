@@ -94,6 +94,77 @@ func TestEncryptedRoundTripRequiresEncryptionType(t *testing.T) {
 	}
 }
 
+func TestCanExtractPlainArchive(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "plain.xp3")
+
+	writer, err := CreateWriter(archive)
+	if err != nil {
+		t.Fatalf("CreateWriter() error = %v", err)
+	}
+	if err := writer.Add("data.bin", []byte("plain"), EncryptionNone, 0); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	check, err := CanExtract(archive, EncryptionNone)
+	if err != nil {
+		t.Fatalf("CanExtract() error = %v", err)
+	}
+	if !check.Extractable {
+		t.Fatalf("CanExtract().Extractable = false, check = %+v", check)
+	}
+}
+
+func TestCanExtractDetectsEncryptedArchive(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "encrypted.xp3")
+
+	writer, err := CreateWriter(archive)
+	if err != nil {
+		t.Fatalf("CreateWriter() error = %v", err)
+	}
+	if err := writer.Add("data.bin", []byte("secret"), "neko_vol0", 0); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	check, err := CanExtract(archive, EncryptionNone)
+	if err != nil {
+		t.Fatalf("CanExtract() error = %v", err)
+	}
+	if check.Extractable || !check.Encrypted || len(check.EncryptedPaths) != 1 {
+		t.Fatalf("CanExtract() = %+v, want encrypted and not extractable", check)
+	}
+
+	check, err = CanExtract(archive, "neko_vol0")
+	if err != nil {
+		t.Fatalf("CanExtract() with encryption error = %v", err)
+	}
+	if !check.Extractable || check.Encrypted {
+		t.Fatalf("CanExtract() with encryption = %+v, want extractable", check)
+	}
+}
+
+func TestCanExtractDetectsProtectedArchiveMarker(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "protected.xp3")
+	protectedPath := "This is a protected archive.txt"
+	writeSingleEntryArchive(t, archive, protectedPath, []byte("warning"))
+
+	check, err := CanExtract(archive, EncryptionNone)
+	if err != nil {
+		t.Fatalf("CanExtract() error = %v", err)
+	}
+	if check.Extractable || !check.Protected || len(check.ProtectedPaths) != 1 {
+		t.Fatalf("CanExtract() = %+v, want protected and not extractable", check)
+	}
+	if check.ProtectedPaths[0] != protectedPath {
+		t.Fatalf("ProtectedPaths[0] = %q, want %q", check.ProtectedPaths[0], protectedPath)
+	}
+}
+
 func TestAddFolderAndExtractAll(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "input")
@@ -229,6 +300,45 @@ func TestReaderRecommendsOmittingPathTerminators(t *testing.T) {
 
 	if !reader.OmitPathTerminatorsRecommended() {
 		t.Fatal("OmitPathTerminatorsRecommended() = false, want true")
+	}
+}
+
+func writeSingleEntryArchive(t *testing.T, archive string, internalPath string, data []byte) {
+	t.Helper()
+
+	entry, payload, err := makeEntry(internalPath, data, uint64(len(signature)+8), EncryptionNone, 0)
+	if err != nil {
+		t.Fatalf("makeEntry() error = %v", err)
+	}
+	index, err := encodeIndex([]Entry{entry}, encodeOptions{})
+	if err != nil {
+		t.Fatalf("encodeIndex() error = %v", err)
+	}
+
+	file, err := os.Create(archive)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	defer file.Close()
+
+	if _, err := file.Write(signature); err != nil {
+		t.Fatalf("write signature: %v", err)
+	}
+	if err := binary.Write(file, binary.LittleEndian, uint64(0)); err != nil {
+		t.Fatalf("write index placeholder: %v", err)
+	}
+	if _, err := file.Write(payload); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	indexOffset := uint64(len(signature) + 8 + len(payload))
+	if _, err := file.Write(index); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	if _, err := file.Seek(int64(len(signature)), io.SeekStart); err != nil {
+		t.Fatalf("seek index placeholder: %v", err)
+	}
+	if err := binary.Write(file, binary.LittleEndian, indexOffset); err != nil {
+		t.Fatalf("write index offset: %v", err)
 	}
 }
 

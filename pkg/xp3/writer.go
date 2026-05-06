@@ -203,8 +203,72 @@ func (w *Writer) Pack() error {
 func normalizeArchivePath(path string) (string, error) {
 	path = filepath.ToSlash(filepath.Clean(path))
 	path = strings.TrimPrefix(path, "./")
-	if path == "." || path == "" || strings.HasPrefix(path, "../") || path == ".." || strings.HasPrefix(path, "/") {
+
+	if path == "." ||
+		path == "" ||
+		path == ".." ||
+		strings.HasPrefix(path, "../") ||
+		strings.Contains(path, "/../") ||
+		strings.HasPrefix(path, "/") ||
+		strings.Contains(path, "\x00") {
 		return "", fmt.Errorf("%w: %q", ErrUnsafePath, path)
 	}
+
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("%w: %q", ErrUnsafePath, path)
+		}
+
+		// Most Linux filesystems have NAME_MAX=255 bytes.
+		// Leave some margin because encoded/non-ASCII names are byte-counted.
+		if len(part) > 240 {
+			return "", fmt.Errorf("%w: path component too long: %q", ErrUnsafePath, part)
+		}
+	}
+
+	// Full relative archive path sanity cap.
+	if len(path) > 1024 {
+		return "", fmt.Errorf("%w: archive path too long: %q", ErrUnsafePath, path)
+	}
+
+	if isProtectedArchiveMarker(path) {
+		return "", fmt.Errorf("%w: protected archive marker: %q", ErrUnsafePath, path)
+	}
+
 	return path, nil
+}
+
+func isProtectedArchiveMarker(path string) bool {
+	base := filepath.Base(filepath.ToSlash(path))
+
+	return strings.Contains(base, "This is a protected archive") ||
+		strings.Contains(base, "Warning! Extracting this archive") ||
+		strings.Contains(base, "著作者はこのアーカイブ") ||
+		strings.Contains(base, "正規の利用方法以外") ||
+		strings.Contains(base, "著作者の権利を侵害")
+}
+
+func safeOutputPath(outputDir, archivePath string) (string, error) {
+	root, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output dir: %w", err)
+	}
+
+	rel := filepath.FromSlash(archivePath)
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("%w: absolute archive path: %q", ErrUnsafePath, archivePath)
+	}
+
+	out := filepath.Join(root, rel)
+
+	outAbs, err := filepath.Abs(out)
+	if err != nil {
+		return "", fmt.Errorf("resolve output path: %w", err)
+	}
+
+	if outAbs != root && !strings.HasPrefix(outAbs, root+string(filepath.Separator)) {
+		return "", fmt.Errorf("%w: archive path escapes output dir: %q", ErrUnsafePath, archivePath)
+	}
+
+	return outAbs, nil
 }

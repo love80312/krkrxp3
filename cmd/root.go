@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/DarlingGoose/krkrxp3/pkg/xp3"
@@ -145,11 +146,12 @@ func run(ctx context.Context, opts options, input string, output string) error {
 			slog.InfoContext(ctx, "dumping archive index", "input", input, "output", output)
 			return reader.DumpIndex(output)
 		}
-
 		slog.InfoContext(ctx, "extracting archive", "input", input, "output", output, "files", len(reader.Entries()))
 		return reader.ExtractAll(output, xp3.ExtractOptions{
-			EncryptionType: opts.encryption,
-			Logger:         slog.Default(),
+			EncryptionType:  opts.encryption,
+			Logger:          slog.Default(),
+			SkipUnsafePaths: true,
+			SkipEncrypted:   true,
 		})
 	case "repack", "r":
 		writer, err := xp3.CreateWriter(output)
@@ -175,4 +177,36 @@ func run(ctx context.Context, opts options, input string, output string) error {
 	default:
 		return fmt.Errorf("unsupported mode %q", opts.mode)
 	}
+}
+
+func includeKiriKiriHookCandidate(entry xp3.Entry, archivePath string) bool {
+	p := strings.ToLower(filepath.ToSlash(archivePath))
+	base := filepath.Base(p)
+
+	// Usually the only file you want to patch/inject near startup.
+	if base == "startup.tjs" {
+		return true
+	}
+
+	// Sometimes projects have boot/init scripts.
+	switch base {
+	case
+		"initialize.tjs",
+		"init.tjs",
+		"first.ks",
+		"config.tjs",
+		"system.tjs",
+		"main.tjs":
+		return true
+	}
+
+	// Keep this narrow. Do not include all scenario/*.ks here.
+	if strings.HasPrefix(p, "system/") {
+		switch filepath.Ext(p) {
+		case ".tjs", ".ks":
+			return true
+		}
+	}
+
+	return false
 }

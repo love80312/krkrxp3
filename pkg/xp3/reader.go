@@ -21,6 +21,10 @@ type ExtractOptions struct {
 	EncryptionType string
 	Raw            bool
 	Logger         Logger
+
+	Include         func(entry Entry, archivePath string) bool
+	SkipUnsafePaths bool
+	SkipEncrypted   bool
 }
 
 func OpenReader(path string) (*Reader, error) {
@@ -88,38 +92,83 @@ func (r *Reader) ExtractAll(outputDir string, opts ExtractOptions) error {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+
 	if count := countUnterminatedPaths(r.entries); count > 0 {
-		opts.Logger.Info("[omit-null-term] archive index has UTF-16 path chunks without null terminators; use --omit-path-terminators when repacking to match this layout", "entries", count)
+		opts.Logger.Info(
+			"[omit-null-term] archive index has UTF-16 path chunks without null terminators; use --omit-path-terminators when repacking to match this layout",
+			"entries", count,
+		)
 	}
 
 	for _, entry := range r.entries {
 		if r.file == nil {
 			return errors.New("reader was not opened from a file")
 		}
+
+		archivePath, err := normalizeArchivePath(entry.FilePath())
+		if err != nil {
+			if opts.SkipUnsafePaths {
+				opts.Logger.Warn("skipping unsafe archive path", "path", entry.FilePath(), "error", err)
+				continue
+			}
+			return err
+		}
+
+		if opts.Include != nil && !opts.Include(entry, archivePath) {
+			opts.Logger.Debug("skipping archive entry", "path", archivePath)
+			continue
+		}
+		if entry.IsEncrypted() &&
+			!opts.Raw &&
+			(opts.EncryptionType == "" || opts.EncryptionType == EncryptionNone) {
+			if opts.SkipEncrypted {
+				opts.Logger.Warn("skipping encrypted archive entry", "path", archivePath)
+				continue
+			}
+			return fmt.Errorf("read %q: %w", archivePath, ErrEncryptedFile)
+		}
+		outPath, err := safeOutputPath(outputDir, archivePath)
+		if err != nil {
+			if opts.SkipUnsafePaths {
+				opts.Logger.Warn("skipping unsafe output path", "path", archivePath, "error", err)
+				continue
+			}
+			return err
+		}
+
 		data, err := ReadEntry(r.file, entry, opts.EncryptionType, opts.Raw)
 		if err != nil {
 			return fmt.Errorf("read %q: %w", entry.FilePath(), err)
 		}
+
 		if checksum := adler32.Checksum(data); checksum != entry.Adler.Value && !opts.Raw {
-			return fmt.Errorf("%w for %q: got %08x want %08x", ErrChecksumMismatch, entry.FilePath(), checksum, entry.Adler.Value)
+			return fmt.Errorf(
+				"%w for %q: got %08x want %08x",
+				ErrChecksumMismatch,
+				entry.FilePath(),
+				checksum,
+				entry.Adler.Value,
+			)
 		}
 
-		archivePath, err := normalizeArchivePath(entry.FilePath())
-		if err != nil {
-			return err
-		}
-		outPath := filepath.Join(outputDir, filepath.FromSlash(archivePath))
 		if err := mkdirParent(outPath); err != nil {
 			return err
 		}
+
 		if err := os.WriteFile(outPath, data, 0o644); err != nil {
 			return fmt.Errorf("write %q: %w", outPath, err)
 		}
-		opts.Logger.Info("extracted file", "path", entry.FilePath(), "compressed_bytes", entry.CompressedSize(), "uncompressed_bytes", entry.UncompressedSize())
+
+		opts.Logger.Info(
+			"extracted file",
+			"path", entry.FilePath(),
+			"compressed_bytes", entry.CompressedSize(),
+			"uncompressed_bytes", entry.UncompressedSize(),
+		)
 	}
+
 	return nil
 }
-
 func ReadEntry(rs io.ReadSeeker, entry Entry, encryptionType string, raw bool) ([]byte, error) {
 	if entry.IsEncrypted() && (encryptionType == "" || encryptionType == EncryptionNone) && !raw {
 		return nil, ErrEncryptedFile

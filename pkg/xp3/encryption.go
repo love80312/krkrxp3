@@ -17,6 +17,15 @@ type encryptionParameters struct {
 	chunkName    [4]byte
 }
 
+type EncryptionProbeResult struct {
+	Type         string
+	Matched      bool
+	FailedPath   string
+	GotChecksum  uint32
+	WantChecksum uint32
+	Err          error
+}
+
 var encryptionParametersByType = map[string]encryptionParameters{
 	EncryptionNone:    {masterKey: 0x00000000, secondaryKey: 0x00, xorFirstByte: false, chunkName: [4]byte{'e', 'l', 'i', 'F'}},
 	"neko_vol1":       {masterKey: 0x1548E29C, secondaryKey: 0xD7, xorFirstByte: false, chunkName: [4]byte{'e', 'l', 'i', 'F'}},
