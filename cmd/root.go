@@ -21,6 +21,7 @@ type options struct {
 	silent         bool
 	flatten        bool
 	dumpIndex      bool
+	descramble     bool
 	saveTimestamps bool
 	omitPathTerms  bool
 }
@@ -53,6 +54,7 @@ func Execute(ctx context.Context) error {
 	rootCmd.Flags().BoolP("silent", "s", false, "suppress informational logs")
 	rootCmd.Flags().BoolP("flatten", "f", false, "pack files into the archive root")
 	rootCmd.Flags().BoolP("dump-index", "i", false, "dump the archive file index instead of extracting files")
+	rootCmd.Flags().Bool("descramble", false, "descramble Kirikiri text files during extraction")
 	rootCmd.Flags().Bool("save-timestamps", false, "store source file modification times when repacking")
 	rootCmd.Flags().Bool("omit-path-terminators", false, "omit UTF-16 null terminators in index path chunks when repacking")
 
@@ -67,7 +69,7 @@ func bindFlags(cmd *cobra.Command) error {
 	if err := viper.BindPFlag("config", cmd.PersistentFlags().Lookup("config")); err != nil {
 		return err
 	}
-	for _, key := range []string{"mode", "encryption", "silent", "flatten", "dump-index", "save-timestamps", "omit-path-terminators"} {
+	for _, key := range []string{"mode", "encryption", "silent", "flatten", "dump-index", "descramble", "save-timestamps", "omit-path-terminators"} {
 		if err := viper.BindPFlag(key, cmd.Flags().Lookup(key)); err != nil {
 			return err
 		}
@@ -108,6 +110,7 @@ func optionsFromViper(cfgFile string) options {
 		silent:         viper.GetBool("silent"),
 		flatten:        viper.GetBool("flatten"),
 		dumpIndex:      viper.GetBool("dump-index"),
+		descramble:     viper.GetBool("descramble"),
 		saveTimestamps: viper.GetBool("save-timestamps"),
 		omitPathTerms:  viper.GetBool("omit-path-terminators"),
 	}
@@ -149,6 +152,7 @@ func run(ctx context.Context, opts options, input string, output string) error {
 		slog.InfoContext(ctx, "extracting archive", "input", input, "output", output, "files", len(reader.Entries()))
 		return reader.ExtractAll(output, xp3.ExtractOptions{
 			EncryptionType:  opts.encryption,
+			Descramble:      opts.descramble,
 			Logger:          slog.Default(),
 			SkipUnsafePaths: true,
 			SkipEncrypted:   true,

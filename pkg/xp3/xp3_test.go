@@ -206,6 +206,77 @@ func TestAddFolderAndExtractAll(t *testing.T) {
 	}
 }
 
+func TestDescrambleKirikiriTextModes(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{name: "mode0", data: scrambleKirikiriTextMode0("hello\r\n世界")},
+		{name: "mode1", data: scrambleKirikiriTextMode1("hello\r\n世界")},
+		{name: "mode2", data: scrambleKirikiriTextMode2(t, "hello\r\n世界")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok, err := DescrambleKirikiriText(tt.data)
+			if err != nil {
+				t.Fatalf("DescrambleKirikiriText() error = %v", err)
+			}
+			if !ok {
+				t.Fatal("DescrambleKirikiriText() ok = false, want true")
+			}
+			if string(got) != "hello\r\n世界" {
+				t.Fatalf("DescrambleKirikiriText() = %q", got)
+			}
+		})
+	}
+}
+
+func TestDescrambleKirikiriTextIgnoresPlainData(t *testing.T) {
+	got, ok, err := DescrambleKirikiriText([]byte("plain text"))
+	if err != nil {
+		t.Fatalf("DescrambleKirikiriText() error = %v", err)
+	}
+	if ok {
+		t.Fatalf("DescrambleKirikiriText() ok = true, got %q", got)
+	}
+}
+
+func TestExtractAllCanDescrambleText(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "archive.xp3")
+	scrambled := scrambleKirikiriTextMode0("line 1\r\nline 2")
+
+	writer, err := CreateWriter(archive)
+	if err != nil {
+		t.Fatalf("CreateWriter() error = %v", err)
+	}
+	if err := writer.Add("scenario/main.ks", scrambled, EncryptionNone, 0); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reader, err := OpenReader(archive)
+	if err != nil {
+		t.Fatalf("OpenReader() error = %v", err)
+	}
+	defer reader.Close()
+
+	output := filepath.Join(dir, "output")
+	if err := reader.ExtractAll(output, ExtractOptions{EncryptionType: EncryptionNone, Descramble: true}); err != nil {
+		t.Fatalf("ExtractAll() error = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(output, "scenario", "main.ks"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "line 1\r\nline 2" {
+		t.Fatalf("extracted content = %q", got)
+	}
+}
+
 func TestUnsafeArchivePathRejected(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "test.xp3")
 	writer, err := CreateWriter(archive)
@@ -401,4 +472,46 @@ func infoChunkSize(t *testing.T, payload []byte) uint64 {
 		t.Fatal("info chunk not found")
 	}
 	return binary.LittleEndian.Uint64(payload[offset+4 : offset+12])
+}
+
+func scrambleKirikiriTextMode0(text string) []byte {
+	data := utf16LEBytes(text)
+	for i := 0; i < len(data); i += 2 {
+		if data[i+1] == 0 && data[i] < 0x20 {
+			continue
+		}
+		data[i] ^= 1
+		data[i+1] ^= data[i] & 0xFE
+	}
+	return append([]byte{0xFE, 0xFE, 0x00, 0xFF, 0xFE}, data...)
+}
+
+func scrambleKirikiriTextMode1(text string) []byte {
+	data := utf16LEBytes(text)
+	for i := 0; i < len(data); i += 2 {
+		c := binary.LittleEndian.Uint16(data[i : i+2])
+		c = ((c & 0xAAAA) >> 1) | ((c & 0x5555) << 1)
+		binary.LittleEndian.PutUint16(data[i:i+2], c)
+	}
+	return append([]byte{0xFE, 0xFE, 0x01, 0xFF, 0xFE}, data...)
+}
+
+func scrambleKirikiriTextMode2(t *testing.T, text string) []byte {
+	t.Helper()
+
+	utf16Data := utf16LEBytes(text)
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(utf16Data); err != nil {
+		t.Fatalf("zlib write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib close: %v", err)
+	}
+
+	out := []byte{0xFE, 0xFE, 0x02, 0xFF, 0xFE}
+	out = binary.LittleEndian.AppendUint64(out, uint64(compressed.Len()))
+	out = binary.LittleEndian.AppendUint64(out, uint64(len(utf16Data)))
+	out = append(out, compressed.Bytes()...)
+	return out
 }

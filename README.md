@@ -23,6 +23,7 @@ Supported features:
 - Optionally store file timestamps when repacking.
 - Optionally omit UTF-16 path terminators for archives that use that index
   variant.
+- Optionally descramble Kirikiri scrambled text files during extraction.
 - Read and write the supported Awakening encryption modes:
   `none`, `neko_vol0`, `neko_vol0_steam`, `neko_vol1`, `neko_vol1_steam`.
 
@@ -83,6 +84,12 @@ krkrxp3 -m extract --encryption neko_vol0 data.xp3 data
 krkrxp3 -m repack --encryption neko_vol0 data data.xp3
 ```
 
+Descramble Kirikiri text files while extracting:
+
+```bash
+krkrxp3 -m extract --descramble data.xp3 data
+```
+
 Dump the archive index:
 
 ```bash
@@ -113,6 +120,7 @@ encryption: none
 silent: false
 flatten: false
 dump-index: false
+descramble: false
 save-timestamps: false
 omit-path-terminators: false
 ```
@@ -122,3 +130,7 @@ omit-path-terminators: false
 XP3 archives have a few format variants in the wild. This port accepts the
 common index layouts used by the original Python project and archives that omit
 UTF-16 null terminators in file path chunks.
+
+The `--descramble` option targets Kirikiri text payloads that start with
+`FE FE 00 FF FE`, `FE FE 01 FF FE`, or `FE FE 02 FF FE`. Matching files are
+decoded to UTF-8 after archive extraction and checksum verification.

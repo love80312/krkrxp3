@@ -20,6 +20,7 @@ type Reader struct {
 type ExtractOptions struct {
 	EncryptionType string
 	Raw            bool
+	Descramble     bool
 	Logger         Logger
 
 	Include         func(entry Entry, archivePath string) bool
@@ -149,6 +150,16 @@ func (r *Reader) ExtractAll(outputDir string, opts ExtractOptions) error {
 				checksum,
 				entry.Adler.Value,
 			)
+		}
+		if opts.Descramble && !opts.Raw {
+			descrambled, ok, err := DescrambleKirikiriText(data)
+			if err != nil {
+				return fmt.Errorf("descramble %q: %w", entry.FilePath(), err)
+			}
+			if ok {
+				data = descrambled
+				opts.Logger.Info("descrambled file", "path", entry.FilePath())
+			}
 		}
 
 		if err := mkdirParent(outPath); err != nil {
